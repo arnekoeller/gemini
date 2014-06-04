@@ -1,17 +1,17 @@
-import os,sys,socket
+import os,sys,socket,threading
 from struct import *
 
-class Lambda:
+class Gemini:
 
-	def __init__(self,ip,port):
-		self.ip = ip
-		self.port = port
+	def __init__(self,serverip,serverport):
+		self.serverip = serverip
+		self.serverport = serverport
 
 	def getPort(self):
-		return self.port
+		return self.serverport
 
 	def getIp(self):
-		return self.ip
+		return self.serverip
 
 	def checkRoot(self):
 		if (os.getuid()!= 0):
@@ -29,8 +29,9 @@ class Lambda:
 	def startClient(self):
 
 		try:
-			clientfd = socket.socket(socket.AF_INET,socket.SOCK_DGRAM,0); #like default parameters
-			clientfd.connect((self.ip,self.port))
+			clientfd = socket.socket(socket.AF_INET,socket.SOCK_DGRAM,0); 
+			#like default parameters
+			clientfd.connect((self.serverip,self.serverport))
 
 		except socket.error ,msg:
 				print "Cannot create socket to server" 
@@ -53,9 +54,9 @@ class Lambda:
 
 	class Sniffer:
 
-		def __init__(self,clientfd,mylambda):
+		def __init__(self,clientfd,mygemini):
 			self.clientfd = clientfd
-			self.mylambda = mylambda
+			self.mygemini = mygemini
 
 		def createRawSocket(self):	
 
@@ -66,18 +67,19 @@ class Lambda:
 				sys.exit()
 			return rawfd
 
+
 		def startSniffing(self,rawfd):
 
 			while True:
-
+				#print self.mygemini.recvMessageFromServer(self.clientfd)
 				packet = rawfd.recvfrom(1500)
 				packet = packet[0]
-				if self.sortOutPackets(packet,self.mylambda) == True:
-					self.mylambda.sendMessageToServer(self.clientfd,packet)
-				#print packet
+				if self.sortOutPackets(packet,self.mygemini) == True:
+					self.mygemini.sendMessageToServer(self.clientfd,packet)
+				
 
 		# Sorting out packets to/from localhost, to Server IP or if IPv6 is in use
-		def sortOutPackets(self,packet,mylambda):
+		def sortOutPackets(self,packet,mygemini):
 
 			eth_length = 14
 			eth_header = packet[:eth_length]
@@ -104,28 +106,62 @@ class Lambda:
 
 					if(str(s_addr) == "127.0.0.1" or str(d_addr) == "127.0.0.1"):
 						return False
-					if(str(d_addr) == mylambda.getIp() or str(s_addr) == mylambda.getIp() ):
+					if(str(d_addr) == mygemini.getIp() or str(s_addr) == mygemini.getIp() ):
 						return False
 
 			return True
 
+# class GeminiThread(threading.Thread):
+
+# 	def __init__(self,threadId,threadName,mygemini,clientfd):
+# 		threading.Thread.__init__(self)
+# 		self.threadId = threadId
+# 		self.threadName = threadName
+# 		self.mygemini = mygemini
+# 		self.clientfd = clientfd
+
+# 	def run(self):
+# 		""" 1 -> Sender 2 -> Listener"""
+# 		if self.threadId == 1:
+			
+# 			try:
+# 				mysniffer = Gemini.Sniffer(self.clientfd,self.mygemini)
+# 				rawfd = mysniffer.createRawSocket()
+# 				mysniffer.startSniffing(rawfd)
+# 			except socket.error:
+# 				print "oops"
+# 				print threading.enumerate()
+
+# 		elif self.threadId == 2:
+
+# 			while True:
+# 				recv = self.mygemini.recvMessageFromServer(self.clientfd)
+# 				print recv
+
 
 def main():
 	
-	hostip = "127.0.0.1"
-	port = 45681
+	serverip = "127.0.0.1"
+	serverport = 45681
 
-	mylambda  = Lambda(hostip,port)
-	clientfd  = mylambda.startClient()
+	mygemini  = Gemini(serverip,serverport)
+	clientfd  = mygemini.startClient()
 
-	mysniffer = Lambda.Sniffer(clientfd,mylambda)
-	rawfd = mysniffer.createRawSocket()
-	mysniffer.startSniffing(rawfd)
+	# t1 = GeminiThread(1,"sender",mygemini,clientfd)
+	# t2 = GeminiThread(2,"listener",mygemini,clientfd)
 
-	#mylambda.sendMessageToServer(clientfd,"hi")
-	#mylambda.recvMessageFromServer(clientfd)
+	# t1.start() #start() calls run()
+	# t2.start()
 
-	mylambda.closeClient(clientfd)
+	try:
+		mysniffer = Gemini.Sniffer(clientfd,mygemini)
+		rawfd = mysniffer.createRawSocket()
+		mysniffer.startSniffing(rawfd)
+	except socket.error:
+		print "oops"
+
+
+	mygemini.closeClient(clientfd)
 
 
 
