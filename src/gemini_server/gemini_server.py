@@ -4,9 +4,10 @@ from struct import *
 
 class Gemini_Server:
 
-	def __init__(self,serverip,serverport):
+	def __init__(self,serverip,serverport,clientaddr):
 		self.serverip = serverip
 		self.serverport = serverport
+		self.clientaddr = clientaddr
 
 	def getPort(self):
 		return self.serverport
@@ -23,18 +24,24 @@ class Gemini_Server:
 
 		except socket.error,msg:
 			print "Could not create Gemini Server"
-			print msg
+			print " -> " + str(msg)
 			sys.exit()
 
 		return serverfd
 		            
 
 	def sendMessageToClient(self,serverfd,message):
-		serverfd.sendto(message)
+		try:
+			serverfd.sendto(message,self.clientaddr)
+		except TypeError, msg:
+			print "No client connection was established"
+			print " -> " + str(msg)
+			sys.exit()
 		
 	def recvMessageFromClient(self,serverfd):
 
-		recv = serverfd.recvfrom(1500)
+		recv = (data,addr) = serverfd.recvfrom(2048)
+		self.clientaddr = recv[1]
 		return recv[0]	#[0] has reply [1] is none
 
 
@@ -43,7 +50,14 @@ class Gemini_Server:
 
 		eth_length = 14
 		eth_header = packet[:eth_length]
-		eth = unpack('!6s6sH' , eth_header)
+
+		try:
+			eth = unpack('!6s6sH' , eth_header)
+		except Exception , msg:
+			print "unpack() error"
+			print " -> " + str(msg)
+			pass
+
 		eth_protocol = socket.ntohs(eth[2])
 
 		packet_content = self.buildMac(packet[0:6]) + \
@@ -113,8 +127,9 @@ class Gemini_Server:
 	def closeServer(self,serverfd):
 			serverfd.close()
 
-	def closedownHandshake(self,serverfd):
-		self.sendMessageToClient(serverfd,"bye")
+	def serverClosedownHandshake(self,serverfd):
+		self.sendMessageToClient(serverfd,"STOPSNIFFING")
+		self.sendMessageToClient(serverfd,"BYE")
 
 
 def main():
@@ -122,16 +137,21 @@ def main():
 	serverip = "127.0.0.1"
 	serverport = 45681
 
-	mygemini_server  = Gemini_Server(serverip,serverport)
+	mygemini_server  = Gemini_Server(serverip,serverport,None)
 	serverfd  = mygemini_server.startServer()
 
 	try:
 		while True:
-			mygemini_server. processData(mygemini_server.recvMessageFromClient(serverfd))
+			data = mygemini_server.recvMessageFromClient(serverfd)
+			print data
+			if data == "HIYA":
+				mygemini_server.sendMessageToClient(serverfd,"STARTSNIFFING")
+			else:
+				mygemini_server.processData(data)
 	except KeyboardInterrupt:
 		print "\nProgram aborted ........."
 		print "Shutting down Server ...."
-		mygemini_server.closedownHandshake(serverfd)
+		mygemini_server.serverClosedownHandshake(serverfd)
 
 	mygemini_server.closeServer(serverfd)
 
