@@ -1,4 +1,14 @@
-import socket,sys,time           
+#!/usr/bin/python
+
+"""
+	Description goes here
+	
+"""
+
+
+import socket
+import sys
+import time           
 from struct import *
 
 
@@ -45,6 +55,16 @@ class Gemini_Server:
 		return recv[0]	#[0] has reply [1] is none
 
 	def atohex(self,string):
+		
+		""" 
+			atohex:
+			Returns Hex-String.
+			Converts given String into Hex-String.
+			Should only be used to display data
+			in Hex not Protocol Headers because
+			the byte order varies there
+		"""
+
 		hexstr = ""
 		for i in range(0,len(string)):
 			if ((i%8 == 0) and (i!=0) ):
@@ -53,152 +73,331 @@ class Gemini_Server:
 
 		return hexstr
 
+	def buildMac(self,data) :
+			mac = ""
+			for i in range(0,5):
+				if i < 4:
+					mac += str(data[i].encode("hex")) + ":"
+				else:
+					mac += str(data[i].encode("hex"))
+			return mac
+
 
 	def processData(self,packet):
 
+		# size of ethernet header in bytes
+		ethhdr_len = 14 	
 
-		eth_length = 14
-		eth_header = packet[:eth_length]
+		# get ethhdr from the packet array				
+		ethhdr = packet[:ethhdr_len]	
 
 		try:
-			eth = unpack('!6s6sH' , eth_header)
+			# unpack ethhdr so we can address values within 
+			ethhdr = unpack("!6s6sH" , ethhdr)		
 		except Exception , msg:
-			print "unpack() error"
+			print "unpack() error"				
 			print " -> " + str(msg)
 			pass
 
-		eth_protocol = socket.ntohs(eth[2])
+		# get ethernet protocol for further layers
+		ethhdr_proto = socket.ntohs(ethhdr[2])		
 
-		packet_content = self.buildMac(packet[0:6]) + \
-						  self.buildMac(packet[6:12]) + str(eth_protocol)
-		print eth_protocol
+		print "############# ETH ######################"
 
-		if eth_protocol == 8:
-			#print "--------------------------------------------"
-			ip_header = packet[eth_length:20+eth_length]
+		print "MAC DEST: " + self.buildMac(packet[0:6]) 	
+		print "MAC SRC:  " + self.buildMac(packet[6:12]) 
+		print "ETH PROT: " + str(ethhdr_proto)
 
-			iph = unpack('!BBHHHBBH4s4s' , ip_header)
 
-			version_ihl = iph[0]
-			version = version_ihl >> 4
-			ihl = version_ihl & 0xF
-			iph_length = ihl * 4
+		if ethhdr_proto == 8:	# if ethernet packet contains IP packet
 
-			tos = iph[1]
-			tot_len = iph[2]
-			ip_id = iph[3]
+			# note: the client software will only send ipv4 packets therefor its 
+			# 		not necessary to parse for ipv6 packets
+
+			# size of ipv4 header in bytes
+			ipv4_len = 20 	
+
+			# get part of packet where IP header is						
+			iphdr = packet[ethhdr_len:ipv4_len+ethhdr_len]	
+
+			# unpack ip header so we can address values within
+			iphdr = unpack("!BBHHHBBH4s4s" , iphdr)	
+
+			ip_version_ihl = iphdr[0]
+			ip_version = ip_version_ihl >> 4
+			ip_ihl = ip_version_ihl & 0xF
+			iphdr_len = ip_ihl * 4
+
+			ip_tos = iphdr[1]
+			ip_tot_len = iphdr[2]
+			ip_id = iphdr[3]
 			
-			frag = iph[4]
+			ip_frag = iphdr[4]
 
-			ttl = iph[5]
-			protocol = iph[6]
-			cksm = iph[7]
-			s_addr = socket.inet_ntoa(iph[8]);
-			d_addr = socket.inet_ntoa(iph[9]);
+			ip_ttl = iphdr[5]
+			ip_protocol = iphdr[6]
+			ip_cksm = iphdr[7]
+			ip_s_addr = socket.inet_ntoa(iphdr[8]);
+			ip_d_addr = socket.inet_ntoa(iphdr[9]);
 
-			# print "iphlength " + str(iph_length)
-			# print tos
-			# print "total length " + str(tot_len)
-			# print ip_id
-			# print ttl
-			# print "checksum " + str(cksm)
-			# print s_addr
+			print "############# IPv4 ######################"
 
-			#TCP
-			if protocol == 6 :
+			print "IP Version : " + str(ip_version)
+			print "IP IHL : " + str(ip_ihl)
+			print "IP TOS : " + str(ip_tos)
+			print "IP total length : " + str(ip_tot_len)
+			print "IP ID : " + str(ip_id)
+			#print "IP FRAG : " + str(ip_frag)
+			print "IP TTL : " + str(ip_ttl)
+			print "IP checksum : " + str(ip_cksm)
+			print "IP SRC: "+ str(ip_s_addr)
+			print "IP DEST: " + str(ip_d_addr)
 
-				t = iph_length + eth_length
-				tcp_header = packet[t:t+20]
-
-				tcph = unpack('!HHLLBBHHH' , tcp_header)
-
-				source_port = tcph[0]
-				dest_port = tcph[1]
-				sequence = tcph[2]
-				acknowledgement = tcph[3]
-				doff_reserved = tcph[4]
-				tcph_length = doff_reserved >> 4
-
-				h_size = eth_length + iph_length + (tcph_length * 4)
-				data_size = len(packet) - h_size
-
-				data = packet[h_size:]
-
-				print "TCp"
-				print "+++++++++++++++++++++++++++++"
-				print self.atohex(data)
-				print "+++++++++++++++++++++++++++++"
 
 			#ICMP Packets
-			elif protocol == 1 :
-				u = iph_length + eth_length
-				icmph_length = 4
-				icmp_header = packet[u:u+4]
+			if ip_protocol == 1 :		# if IP packet contains UDP packet 
 
-				#now unpack them :)
-				icmph = unpack('!BBH' , icmp_header)
+				# size of icmp header in bytes
+				icmphdr_len = 4
 
-				icmp_type = icmph[0]
-				code = icmph[1]
-				checksum = icmph[2]
+				# get part of packet where ICMP header is
+				icmphdr = packet[(ethhdr_len + iphdr_len):ethhdr_len+iphdr_len+icmphdr_len]
 
-				#print 'Type : ' + str(icmp_type) + ' Code : ' + str(code) + ' Checksum : ' + str(checksum)
+				# unpack udp header so we can address values within
+				icmphdr = unpack("!BBH" , icmphdr)	
 
-				h_size = eth_length + iph_length + icmph_length
-				data_size = len(packet) - h_size
+				icmp_type = icmphdr[0]
+				icmp_code = icmphdr[1]
+				icmp_cksm = icmphdr[2]
 
-				#get data from the packet
-				data = packet[h_size:]
+				
 
-				print "ICMP"
-				print "----------------------------------"
+				# calculate where data begins
+				data_offset = ethhdr_len + iphdr_len + icmphdr_len
+
+				data = packet[data_offset:]
+
+				print "############# ICMP ######################"
+				print "ICMP type: " + str(icmp_type)
+				if icmp_type == 8:
+					print "Ping Echo Request"
+				elif icmp_type == 0:
+					print "Ping Echo Reply"
+				print "ICMP code: " + str(icmp_code)
+				print "icmp_cksm:" + str(icmp_cksm)
+
+
+
 				print self.atohex(data)
-				print "----------------------------------"
+
+			#TCP
+			elif ip_protocol == 6 :	# if IP packet contains TCP packet 
+
+				# size of tcp header in bytes
+				tcphdr_len = 20
+
+				# get part of packet where TCP header is
+				tcphdr = packet[(ethhdr_len + iphdr_len):ethhdr_len + iphdr_len+tcphdr_len]		
+
+				# unpack tcp header so we can address values within
+				tcphdr = unpack("!HHLLBBHHH" , tcphdr)	
+
+
+				tcp_source_port = tcphdr[0]
+				tcp_dest_port = tcphdr[1]
+				tcp_sequence = tcphdr[2]
+				tcp_acknowledgement = tcphdr[3]
+				tcp_doff_reserved = tcphdr[4]
+				tcp_length = (tcp_doff_reserved >> 4)*4
+
+				
+				print "############# TCP ######################"
+				print "TCP SRC PORT: " + str(tcp_source_port)
+				print "TCP DEST PORT : "+ str(tcp_dest_port)
+				print "TCP SEQ: " + str(tcp_sequence)
+				print "TCP ACK: " + str(tcp_acknowledgement)
+				print "TCP LEN: " + str(tcp_length)
+
+				# calculate where data begins
+				data_offset = ethhdr_len + iphdr_len + tcp_length 
+
+				data = packet[data_offset:]
+
+				
+
+				if tcp_source_port == 80 or tcp_source_port == 8080 or tcp_dest_port == 80 or tcp_dest_port == 8080:
+					# because of padding added to the packet check if data > 6
+					if len(data) > 6:
+						print "################ HTTP #################"
+						print self.atohex(data)
+						return
+				
+				if tcp_source_port == 443 or tcp_source_port == 443 or tcp_dest_port == 443 or tcp_dest_port == 443:
+					if len(data) > 6:
+
+						tlshdr_len = 5
+
+						tlshdr = packet[ethhdr_len+iphdr_len+tcphdr_len+12:ethhdr_len+iphdr_len+tcphdr_len+12+tlshdr_len]
+
+						#try:
+						#	tlshdr = unpack("BHH",tlshdr)
+						#except:
+						#	return
+
+						#tlshdr_content_type = tlshdr[0]
+						#tlshdr_version = tlshdr[1]
+						#tlshdr_length = tlshdr[2]
+
+						tlshdr_content_type = tlshdr[0].encode("hex")
+						tlshdr_version = tlshdr[1].encode("hex") + tlshdr[2].encode("hex")
+						tlshdr_length = tlshdr[3].encode("hex") + tlshdr[4].encode("hex")
+
+						print "################ HTTPS #################"
+						print tlshdr_content_type
+						if tlshdr_content_type == "14":
+							print "Protocol Type: ChangeCipherSpec"
+						elif tlshdr_content_type == "15":
+							print "Protocol Type: Alert"
+						elif tlshdr_content_type == "16":
+							print "Protocol Type: Handshake"
+						elif tlshdr_content_type == "17":
+							print "Protocol Type: Application"
+
+						print tlshdr_version
+						print tlshdr_length
+
+						data = packet[ethhdr_len+iphdr_len+tcphdr_len+12+tlshdr_len:]
+						print self.atohex(data)
+
+						return
+				
+				print self.atohex(data)
+
 
 			#UDP packets
-			elif protocol == 17 :
-				u = iph_length + eth_length
-				udph_length = 8
-				udp_header = packet[u:u+8]
+			elif ip_protocol == 17 :	# if UDP packet contains UDP packet
 
-				#now unpack them :)
-				udph = unpack('!HHHH' , udp_header)
+				# size of udp header in bytes
+				udphdr_len = 8
 
-				source_port = udph[0]
-				dest_port = udph[1]
-				length = udph[2]
-				checksum = udph[3]
+				# get part of packet where UDP header is
+				udphdr = packet[(ethhdr_len + iphdr_len):ethhdr_len+iphdr_len+udphdr_len]
 
-				print 'Source Port : ' + str(source_port) + ' Dest Port : ' + str(dest_port) + ' Length : ' + str(length) + ' Checksum : ' + str(checksum)
+				# unpack udp header so we can address values within
+				udphdr = unpack("!HHHH" , udphdr)
 
-				h_size = eth_length + iph_length + udph_length
-				data_size = len(packet) - h_size
+				udp_src_port = udphdr[0]
+				udp_dest_port = udphdr[1]
+				udp_length = udphdr[2]
+				udp_cksm = udphdr[3]
 
-				#get data from the packet
-				data = packet[h_size:]
 
-				print "UDP"
-				print "###################################"
+
+				print "############# UDP ######################"
+				print "UDP SRC PORT: " + str(udp_src_port)
+				print "UDP DEST PORT: " + str(udp_dest_port)
+				print "UDP LENGTH: " + str(udp_length)
+				print "UDP CKSM: " + str(udp_cksm)
+
+				
+				
+				if udp_dest_port == 53 or udp_src_port == 53:	# most likely dns 
+
+					# size of dns header in bytes
+					dnshdr_len = 12
+
+					# get part of packet where DNS header is
+					dnshdr = packet[ethhdr_len+iphdr_len+udphdr_len:ethhdr_len + iphdr_len+udphdr_len+dnshdr_len]
+
+					dnshdr = unpack("!HHHHHH",dnshdr)
+
+					dns_identifier = dnshdr[0]
+					dns_flags = dnshdr[1]
+					dns_qcount = dnshdr[2]
+					dns_acount = dnshdr[3]
+					dns_nscount = dnshdr[4]
+					dns_arcount = dnshdr[5]
+
+					print "############### DNS ###############"
+					print dns_identifier
+					print dns_flags
+					print dns_qcount
+					print dns_acount
+					print dns_nscount
+					print dns_arcount
+
+
+					# pretty hacky but it doesn't have to be perfect
+					if dns_flags == 256:
+						print "Query"
+					elif dns_flags == 33152:
+						print "Response no error"
+
+					query_offset = ethhdr_len + iphdr_len + udphdr_len + dnshdr_len
+
+					dns_query_len = 16
+					dns_query = packet[query_offset:query_offset+dns_query_len] 
+					try:
+						dns_query = unpack("12sHH",dns_query)
+					except:
+						return
+
+					# Name must be decoded later
+					print "Name: " + str(dns_query[0].encode("hex"))
+					print "Type: " + str(socket.ntohs(dns_query[1]))
+					
+					if socket.ntohs(dns_query[1]) == 1:
+						print "Type A requested"
+					elif socket.ntohs(dns_query[1]) == 15:
+						print "Type MX requested"
+					elif socket.ntohs(dns_query[1]) == 28:
+						print "Type AAAA requested"
+
+					print "Class: " + str(socket.ntohs(dns_query[2]))
+
+					# the dns server's answer doesn't matter to us so i'm
+					# leaving it out
+
+					return
+
+
+				# calculate where data begins
+				data_offset = ethhdr_len + iphdr_len + udphdr_len
+
+				data = packet[data_offset:]
 				print self.atohex(data)
-				print "###################################"
 
-			#some other IP packet like IGMP
-			else :
-				#print 'Protocol other than TCP/UDP/ICMP'
+
+			
+			else :	#some other IP packets
+
 				pass
 
 		#ARP
-		if eth_protocol == 1544:
+		if ethhdr_proto == 1544:	# if ethernet packet contains ARP packet
 
-			print "--> --> --> ARP <-- <-- <--"
+			# size of arp header in bytes
+			arphdr_len = 28
 
-		
+			# get part of packet where ARP header is
+			arphdr = packet[ethhdr_len:arphdr_len+ethhdr_len]
 
-	def buildMac(self,data) :
-			mac = "%.2x%.2x%.2x%.2x%.2x%.2x" % (ord(data[0]) , ord(data[1]) , 
-												ord(data[2]) , ord(data[3]) ,
-												ord(data[4]) , ord(data[5]))
-			return mac
+			# unpack ARP header so we can address values within
+			arphdr = unpack("HHBBH6s4s6s4s",packet[ethhdr_len:arphdr_len+ethhdr_len])
+
+
+			print "############# ARP ######################"
+			print socket.htons(arphdr[0])
+			print arphdr[1]
+			print arphdr[2]
+			print arphdr[3]
+			print socket.ntohs(arphdr[4])
+			print "Target MAC" + str(self.buildMac(arphdr[5]))
+			print "Sender IP" + str(socket.inet_ntoa(arphdr[6]))
+			print "Target MAC" + str(self.buildMac(arphdr[7]))
+			print "Target IP" + str(socket.inet_ntoa(arphdr[8]))
+
+	
 
 	def closeServer(self,serverfd):
 			serverfd.close()

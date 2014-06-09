@@ -1,4 +1,11 @@
-import os,sys,socket,threading,time,Queue
+#!/usr/bin/python
+
+import os
+import sys
+import socket
+import threading
+import time
+import Queue
 from struct import *
 
 
@@ -75,32 +82,43 @@ def stopSniffing(rawfd):
 
 def sortOutPackets(packet,serverAddr):
 
-	eth_length = 14
-	eth_header = packet[:eth_length]
-	eth = unpack('!6s6sH' , eth_header)
-	eth_protocol = socket.ntohs(eth[2])
+	# size of ethernet header in bytes
+	ethhdr_len = 14	
 
-	if eth_protocol == 8 :
+	ethhdr = packet[:ethhdr_len]
+	eth = unpack("!6s6sH" , ethhdr)
+	ethhdr_proto = socket.ntohs(eth[2])
 
-		ip_header = packet[eth_length:20+eth_length]
+	if ethhdr_proto == 8 :
 
-		iph = unpack('!BBHHHBBH4s4s' , ip_header)
+		# size of ipv4 header in bytes
+		ipv4_len = 20 	
 
-		version_ihl = iph[0]
-		version = version_ihl >> 4
-		ihl = version_ihl & 0xF
-		iph_length = ihl * 4
+		# get part of packet where IP header is		
+		iphdr = packet[ethhdr_len:ipv4_len+ethhdr_len]
+
+		# unpack ip header so we can address values within
+		iph = unpack('!BBHHHBBH4s4s' , iphdr)
+
+		ip_version_ihl = iph[0]
+		ip_version = ip_version_ihl >> 4
+		ip_ihl = ip_version_ihl & 0xF
+		iphdr_len = ip_ihl * 4
 
 		# no support for IPv6
-		if version == 6:
+		if ip_version == 6:
 			return False
 
-		s_addr = socket.inet_ntoa(iph[8]);
-		d_addr = socket.inet_ntoa(iph[9]);
+		ip_s_addr = socket.inet_ntoa(iph[8]);
+		ip_d_addr = socket.inet_ntoa(iph[9]);
 
-		if(str(s_addr) == "127.0.0.1" or str(d_addr) == "127.0.0.1"):
+		#filter all packets that are using lo interface or that are being detected by the
+		#sniffer but belong to this application and are therefor just being transmitter
+		#to the gemini server
+
+		if(str(ip_s_addr) == "127.0.0.1" or str(ip_d_addr) == "127.0.0.1"):
 			return False
-		if(str(d_addr) == serverAddr[0] or str(s_addr) == serverAddr[0] ):
+		if(str(ip_d_addr) == serverAddr[0] or str(ip_s_addr) == serverAddr[0] ):
 			return False
 
 	return True
@@ -119,7 +137,6 @@ class GeminiDelegatorThread(threading.Thread):
 		self.runmodus = runmodus
 		self.threadlist = threadlist
 
-		self.server_state = "DOWN"
 		self.mySniffer = None
 
 		print "[+] Delegator Thread has been successfully initialized "
@@ -137,26 +154,38 @@ class GeminiDelegatorThread(threading.Thread):
 			data = recvMessageFromServer(self.gsockfd)
 			#print data
 			if data == "SERVERNOTUP":
-				print "[!] Server is probably not up. Trying to contact server again in 30s"
+
+				if self.mySniffer != None:
+					self.mySniffer.stop()
+					self.mySniffer = None
+
+				print "[!] Server is probably not up. Trying to contact server in 30s"
 				time.sleep(30)	# wait for 30secs and try to contact server again
 				self.queue.put("HIYA")
-				self.server_state = "DOWN"
 				continue
 			if data == "ISEEU":
 				# confirmation that handshake succeeded
-				self.server_state = "UP"
 				pass
 			if data == "STARTSNIFFING":
+				
+				if self.mySniffer == None:
 
-				mySniffer = GeminiSnifferThread(3, self.queue, self.serverAddr)
-				self.mySniffer = mySniffer
-				mySniffer.start()
-				self.threadlist.append(mySniffer)
+					mySniffer = GeminiSnifferThread(3, self.queue, self.serverAddr)
+					self.mySniffer = mySniffer
+					mySniffer.start()
+					self.threadlist.append(mySniffer)
+
+				else:
+					# Shouldn't happen; if it does Server end is doing something wrong
+					print "[!] Error occured: Multiple Sniffer Threads active "
+
+
 
 			if data == "STOPSNIFFING":
 
 				if self.mySniffer != None:
 					self.mySniffer.stop()
+					self.mySniffer = None
 
 			if data == "GEMINISHUTDOWN":
 				print "[!] Shutting everything down. Please wait ..."
@@ -249,8 +278,8 @@ class GeminiSnifferThread(threading.Thread):
 def main():
 
 	########################################## Start Screen #########################################
-
-	os.system("clear")	#clear screen
+	if checkOSType() == "Linux":
+		os.system("clear")	#clear screen
 	
 	print """                           _____                      _           _ 
   			  / ____|                    (_)         (_)
